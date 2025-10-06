@@ -127,12 +127,12 @@ jobs:
         
         # 创建版本信息文件
         cat > artifacts/VERSION << EOF
-utf8proc ARMv7 Hard Float Build
-Architecture: ARMv7-A with NEON and VFPv4
-Float ABI: hard
-Build Date: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
-Git Commit: $(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-EOF
+        utf8proc ARMv7 Hard Float Build
+        Architecture: ARMv7-A with NEON and VFPv4
+        Float ABI: hard
+        Build Date: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+        Git Commit: $(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+        EOF
         
         # 列出所有文件
         echo "==> Artifact contents:"
