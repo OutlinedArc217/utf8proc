@@ -127,12 +127,12 @@ jobs:
         
         # 创建版本信息文件
         cat > artifacts/VERSION << EOF
-utf8proc ARMv7 Hard Float Build
-Architecture: ARMv7-A with NEON and VFPv4
-Float ABI: hard
-Build Date: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
-Git Commit: $(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-EOF
+        utf8proc ARMv7 Hard Float Build
+        Architecture: ARMv7-A with NEON and VFPv4
+        Float ABI: hard
+        Build Date: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+        Git Commit: $(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+        EOF
         
         # 列出所有文件
         echo "==> Artifact contents:"
@@ -167,30 +167,28 @@ EOF
         
         # 创建 control 文件
         cat > ipk-build/control/control << EOF
-Package: ${PKG_NAME}
-Version: ${VERSION}-1
-Architecture: ${ARCH}
-Maintainer: GitHub Actions <actions@github.com>
-Section: libs
-Priority: optional
-Description: UTF-8 processing library
- A clean C library for processing UTF-8 Unicode data.
- Built for ARMv7-A with NEON and VFPv4 hard float.
-EOF
+        Package: ${PKG_NAME}
+        Version: ${VERSION}-1
+        Architecture: ${ARCH}
+        Maintainer: GitHub Actions <actions@github.com>
+        Section: libs
+        Priority: optional
+        Description: UTF-8 processing library
+        EOF
         
         # 创建 postinst 脚本（可选）
         cat > ipk-build/control/postinst << 'EOF'
-#!/bin/sh
-/sbin/ldconfig 2>/dev/null || true
-exit 0
-EOF
+        #!/bin/sh
+        /sbin/ldconfig 2>/dev/null || true
+        exit 0
+        EOF
         chmod +x ipk-build/control/postinst
         
         # 创建 prerm 脚本（可选）
         cat > ipk-build/control/prerm << 'EOF'
-#!/bin/sh
-exit 0
-EOF
+        #!/bin/sh
+        exit 0
+        EOF
         chmod +x ipk-build/control/prerm
         
         # 计算文件大小
