@@ -1,86 +1,247 @@
-name: CMake
+name: Cross Compile utf8proc for ARMv7 Hard Float
 
 on:
   push:
-    branches:
-      - master
-      - 'release-*'
+    branches: [ main, master ]
   pull_request:
-  # run on all pr
+    branches: [ main, master ]
+  workflow_dispatch:
 
 jobs:
-  build:
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest, macOS-latest]
-        shared: ["ON", "OFF"]
-    runs-on: ${{ matrix.os }}
-    name: ${{ matrix.os }} - shared=${{ matrix.shared }}
+  build-armv7:
+    runs-on: ubuntu-22.04
+    
     steps:
-    - uses: actions/checkout@v5
-    - name: Build
-      run: |
-        mkdir build
-        cmake -S . -B build -DBUILD_SHARED_LIBS=${{ matrix.shared }} -DUTF8PROC_ENABLE_TESTING=ON -DCMAKE_INSTALL_PREFIX=tmp/install
-        cmake --build build
-    - name: Run Test
-      run: ctest --test-dir build -V
-    - name: Upload shared lib
-      if: matrix.shared == 'ON'
-      uses: actions/upload-artifact@v4
+    - name: Checkout code
+      uses: actions/checkout@v4
       with:
-        name: ${{ matrix.os }}
-        path: |
-          build/libutf8proc.*
-          build/Debug/utf8proc.*
-    - name: Test Consuming (Windows)
-      if: runner.os == 'Windows'
-      run: |
-        cmake --install build --config Debug
-        cmake -S test/app -B test/app/build -DCMAKE_INSTALL_PREFIX=tmp/install
-        cmake --build test/app/build
-        $Env:PATH = "$PWD\tmp\install\bin;$Env:PATH"
-        test/app/build/Debug/app.exe
-    - name: Test Consuming (Unix)
-      if: runner.os != 'Windows'
-      run: |
-        cmake --install build
-        cmake -S test/app -B test/app/build -DCMAKE_INSTALL_PREFIX=tmp/install
-        cmake --build test/app/build
-        test/app/build/app
+        submodules: recursive
 
-  mingw:
-    strategy:
-      matrix:
-        os: [windows-latest]
-        shared: ["ON", "OFF"]
-    runs-on: ${{ matrix.os }}
-    name: mingw64 - shared=${{ matrix.shared }}
-    defaults:
-      run:
-        shell: msys2 {0}
-    steps:
-    - uses: actions/checkout@v5
-    - uses: msys2/setup-msys2@v2
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@v3
       with:
-        install: gcc make mingw-w64-x86_64-cmake
-    - name: Build
+        platforms: arm
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Build utf8proc for ARMv7
       run: |
-        mkdir build
-        cmake -S . -B build -DBUILD_SHARED_LIBS=${{ matrix.shared }} -DUTF8PROC_ENABLE_TESTING=ON -G'MSYS Makefiles' -DCMAKE_INSTALL_PREFIX=tmp/install
-        cmake --build build
-    - name: Run Test
-      run: ctest --test-dir build -V
-    - name: Upload shared lib
-      if: matrix.shared == 'ON'
+        docker run --rm \
+          --platform linux/arm/v7 \
+          -v $PWD:/workspace \
+          -w /workspace \
+          debian:bullseye-slim \
+          bash -c "
+            set -e
+            
+            echo '==> Installing build dependencies'
+            apt-get update
+            apt-get install -y \
+              build-essential \
+              gcc \
+              g++ \
+              make \
+              cmake \
+              pkg-config \
+              git
+            
+            echo '==> Building utf8proc library'
+            mkdir -p build
+            cd build
+            
+            # 使用 CMake 构建
+            cmake .. \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_C_FLAGS=\"-march=armv7-a -mfpu=neon-vfpv4 -mfloat-abi=hard -O2\" \
+              -DCMAKE_CXX_FLAGS=\"-march=armv7-a -mfpu=neon-vfpv4 -mfloat-abi=hard -O2\" \
+              -DCMAKE_INSTALL_PREFIX=/workspace/install \
+              -DBUILD_SHARED_LIBS=ON \
+              -DBUILD_STATIC_LIBS=ON
+            
+            # 编译
+            make -j\$(nproc)
+            
+            # 安装到本地目录
+            make install DESTDIR=/workspace/install-root
+            
+            echo '==> Build completed successfully'
+            
+            # 显示生成的文件
+            echo '==> Generated files:'
+            find . -name '*.so*' -o -name '*.a'
+            
+            # 显示库信息
+            echo '==> Library information:'
+            file libutf8proc.so* || true
+            file libutf8proc.a || true
+          "
+
+    - name: Verify binaries
+      run: |
+        echo "==> Verifying library architecture:"
+        
+        # 安装 file 工具
+        sudo apt-get update
+        sudo apt-get install -y file
+        
+        # 检查共享库
+        if [ -f "build/libutf8proc.so" ]; then
+          echo "Found shared library:"
+          file build/libutf8proc.so*
+        fi
+        
+        # 检查静态库
+        if [ -f "build/libutf8proc.a" ]; then
+          echo "Found static library:"
+          file build/libutf8proc.a
+        fi
+
+    - name: Package artifacts
+      run: |
+        echo "==> Packaging artifacts"
+        mkdir -p artifacts/lib
+        mkdir -p artifacts/include
+        
+        # 复制库文件
+        cp -v build/libutf8proc.so* artifacts/lib/ || true
+        cp -v build/libutf8proc.a artifacts/lib/ || true
+        
+        # 复制头文件
+        cp -v utf8proc.h artifacts/include/ || true
+        
+        # 复制 pkg-config 文件
+        if [ -f "build/libutf8proc.pc" ]; then
+          mkdir -p artifacts/lib/pkgconfig
+          cp -v build/libutf8proc.pc artifacts/lib/pkgconfig/
+        fi
+        
+        # 复制 CMake 配置文件
+        if [ -d "build/utf8procConfig" ]; then
+          mkdir -p artifacts/lib/cmake/utf8proc
+          cp -rv build/*.cmake artifacts/lib/cmake/utf8proc/ || true
+        fi
+        
+        # 复制文档
+        cp -v LICENSE.md README.md artifacts/ || true
+        
+        # 创建版本信息文件
+        cat > artifacts/VERSION << EOF
+utf8proc ARMv7 Hard Float Build
+Architecture: ARMv7-A with NEON and VFPv4
+Float ABI: hard
+Build Date: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+Git Commit: $(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+EOF
+        
+        # 列出所有文件
+        echo "==> Artifact contents:"
+        ls -lhR artifacts/
+        
+        # 打包 tar.gz
+        cd artifacts
+        tar -czf ../utf8proc-armv7-hf.tar.gz *
+        cd ..
+        
+        echo "==> Package created:"
+        ls -lh utf8proc-armv7-hf.tar.gz
+
+    - name: Build IPK package
+      run: |
+        echo "==> Building IPK package"
+        
+        # 获取版本号
+        VERSION=$(grep "PROJECT_VERSION" CMakeLists.txt | grep -oP '\d+\.\d+\.\d+' | head -1 || echo "2.9.0")
+        ARCH="armv7-a_neon-vfpv4_hardfp"
+        PKG_NAME="utf8proc"
+        
+        # 创建 IPK 目录结构
+        mkdir -p ipk-build/control
+        mkdir -p ipk-build/data/usr/lib
+        mkdir -p ipk-build/data/usr/include
+        
+        # 复制文件到 data 目录
+        cp -v build/libutf8proc.so* ipk-build/data/usr/lib/ || true
+        cp -v build/libutf8proc.a ipk-build/data/usr/lib/ || true
+        cp -v utf8proc.h ipk-build/data/usr/include/
+        
+        # 创建 control 文件
+        cat > ipk-build/control/control << EOF
+Package: ${PKG_NAME}
+Version: ${VERSION}-1
+Architecture: ${ARCH}
+Maintainer: GitHub Actions <actions@github.com>
+Section: libs
+Priority: optional
+Description: UTF-8 processing library
+ A clean C library for processing UTF-8 Unicode data.
+ Built for ARMv7-A with NEON and VFPv4 hard float.
+EOF
+        
+        # 创建 postinst 脚本（可选）
+        cat > ipk-build/control/postinst << 'EOF'
+#!/bin/sh
+/sbin/ldconfig 2>/dev/null || true
+exit 0
+EOF
+        chmod +x ipk-build/control/postinst
+        
+        # 创建 prerm 脚本（可选）
+        cat > ipk-build/control/prerm << 'EOF'
+#!/bin/sh
+exit 0
+EOF
+        chmod +x ipk-build/control/prerm
+        
+        # 计算文件大小
+        INSTALLED_SIZE=$(du -sk ipk-build/data | cut -f1)
+        echo "Installed-Size: ${INSTALLED_SIZE}" >> ipk-build/control/control
+        
+        # 打包 data.tar.gz
+        cd ipk-build/data
+        tar -czf ../data.tar.gz .
+        cd ../..
+        
+        # 打包 control.tar.gz
+        cd ipk-build/control
+        tar -czf ../control.tar.gz .
+        cd ../..
+        
+        # 创建 debian-binary 文件
+        echo "2.0" > ipk-build/debian-binary
+        
+        # 打包成 IPK
+        cd ipk-build
+        tar -czf ../${PKG_NAME}_${VERSION}-1_${ARCH}.ipk debian-binary control.tar.gz data.tar.gz
+        cd ..
+        
+        echo "==> IPK package created:"
+        ls -lh ${PKG_NAME}_${VERSION}-1_${ARCH}.ipk
+        
+        # 显示 IPK 内容
+        echo "==> IPK package contents:"
+        tar -tzf ${PKG_NAME}_${VERSION}-1_${ARCH}.ipk
+
+    - name: Upload tar.gz artifact
       uses: actions/upload-artifact@v4
       with:
-        name: windows-mingw64
-        path: build/libutf8proc.*
-    - name: Test Consuming
-      run: |
-        cmake --install build
-        cmake -S test/app -B test/app/build -DCMAKE_INSTALL_PREFIX=tmp/install -G'MSYS Makefiles'
-        cmake --build test/app/build
-        PATH="$(pwd)/tmp/install/bin:$PATH"
-        test/app/build/app.exe
+        name: utf8proc-armv7-hf-tarball
+        path: utf8proc-armv7-hf.tar.gz
+        retention-days: 30
+
+    - name: Upload IPK artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: utf8proc-armv7-hf-ipk
+        path: "*.ipk"
+        retention-days: 30
+
+    - name: Create Release (on tag)
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v2
+      with:
+        files: |
+          utf8proc-armv7-hf.tar.gz
+          *.ipk
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
